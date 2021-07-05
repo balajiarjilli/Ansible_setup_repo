@@ -1,0 +1,75 @@
+---
+- hosts: localhost
+  become: true
+
+  vars:
+    db_user: postgres
+    db_password: postgres@1234
+    db_name: postgresdb
+
+  pre_tasks:
+   - name: install postgresql packages
+     yum: "name={{ item }}  state=present"
+     with_items:
+       - postgresql
+       - postgresql-server
+       - pip
+
+   - name: install python packages for postgresql
+     pip: "name={{ item }} state=present"
+     with_items:
+       - psycopg2-binary
+
+  tasks:
+   - name: update pg_hba.conf configuration file
+     stat:
+       path: "/var/lib/pgsql/data/pg_hba.conf"
+     register: pg_hba
+
+   - name: "initilize postgresql"
+     shell: "postgresql-setup initdb"
+     when: not pg_hba.stat.exists
+
+   - name: enable the service so that the service should start on boot
+     service: "name={{ item }} state=started enabled=yes"
+     with_items:
+       - postgresql
+
+
+   - name: create postgres database
+     postgresql_db:
+       state: present
+       name: "{{ db_name }}"
+     become: true
+     become_user: postgres
+
+   - name: "create db user"
+     postgresql_user:
+       state: present
+       name: "{{ db_user }}"
+       password: "{{ db_password }}"
+     become_user: postgres
+
+   - name: grant db user access to postgresdb
+     postgresql_privs:
+       type: database
+       database: "{{ db_name }}"
+       roles: "{{ db_user }}"
+       grant_option: no
+       privs: all
+     become_user: postgres
+
+   - name: allow md5 connection to the db user
+     postgresql_pg_hba:
+       dest: "/var/lib/pgsql/data/pg_hba.conf"
+       contype: host
+       databases: all
+       method: md5
+       users: "{{ db_user }}"
+       create: true
+     become_user: postgres
+     notify: restart postgres
+
+  handlers:
+    - name: restart postgres
+      service: name=postgresql state="restarted"
